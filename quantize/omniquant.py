@@ -126,6 +126,7 @@ def omniquant(
         dtype = torch.float
         traincast = nullcontext
     else:
+        print("amp확인\n")
         dtype = torch.float16
         traincast = torch.cuda.amp.autocast
     #입력 텐서 생성
@@ -261,8 +262,10 @@ def omniquant(
         logger.info(f"=== Start quantize layer {i} ===")
         layer = layers[i].to(dev) #layer가 각각 디코더 블록인가봄.
         
-        #마지막 layernorm을 꺼내서 저장.
-        former_final_layernorm= layer.output.LayerNorm
+        if i==0:
+            former_final_layernorm= None
+        else:
+            former_final_layernorm=layers[i-1].output.LayerNorm.to(dev)
 
         if "mixtral" in args.net.lower():  #일단 mixtral은 안쓸 것 같으니 제외하자.
             # for mixtral, we only leverage lwc, which can be achieve by simply replace Linear with QuantLinear
@@ -316,10 +319,7 @@ def omniquant(
                             weight = module.weight.abs().max(dim=0)[0].clamp(min=1e-5)
                             #활성화 값과 가중치 값의 비율을 사용해서 적절히 스케일 값을 조절한다네
                             scale = (act.pow(args.alpha)/weight.pow(1-args.alpha)).clamp(min=1e-5)
-                            if torch.eq(scale, 0).any():
-                                print("scale 값에 0이 포함되었다!!!!!\n")
-                            else:
-                                print("scale 값에 0이 안 포함되었다!!!!!\n")
+
                             if use_shift and not is_llama:
                                 shift = act_shifts[f"{layer_name_prefix}.{i}.{name}"].to(device=dev, dtype=dtype)
                             else:
@@ -328,6 +328,12 @@ def omniquant(
                             qlayer.register_parameter(f"{keypairs[key]}_smooth_shift",torch.nn.Parameter(shift))
                             qlayer.register_parameter(f"{keypairs[key]}_smooth_scale",torch.nn.Parameter(scale))
                             
+        for name, param in qlayer.named_parameters():
+            if param.requires_grad:  # requires_grad=True인 파라미터만 필터링
+                print(f"Parameter name: {name}")
+                print(f"Parameter shape: {param.shape}")
+                print(f"Parameter value: {param}\n")
+                print("-----------------------------------------------")
 
                                 
         if args.resume:
@@ -380,10 +386,10 @@ def omniquant(
                     
 
                     #이거 한번 써보자.
-                    loss.backward()
-                    optimizer.step()
-                    # norm = loss_scaler(loss, optimizer,parameters= get_omni_parameters(qlayer, use_shift)).cpu() #omni_parameter만 학습을 하는 것이다.
-                    # norm_list.append(norm.data) #계산한 그래디언트 노름 값을 리스트에 또 저장함.
+                    # loss.backward()
+                    # optimizer.step()
+                    norm = loss_scaler(loss, optimizer,parameters= get_omni_parameters(qlayer, use_shift)).cpu() #omni_parameter만 학습을 하는 것이다.
+                    norm_list.append(norm.data) #계산한 그래디언트 노름 값을 리스트에 또 저장함.
 
 
                 loss_mean = torch.stack(loss_list).mean() #이번 블록 계산에서 loss의 평균을 구함. torch.stack으로 여러 배치에서 계산된 것들을 하나의 텐서로 결합.

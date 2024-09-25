@@ -40,6 +40,7 @@ def smooth_ln_fcs_temporary(ln, fcs, scales,shifts):
 
     ln.temp_weight = ln.weight / scales
 
+
     #근데, 이러면 x에 scales 값을 곱해주어야 할 텐데. 그건 어디서 처리하는 것이지?
     #ln또는 fully connected에 let적용
     for fc in fcs:
